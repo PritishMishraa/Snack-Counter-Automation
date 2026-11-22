@@ -1,0 +1,23 @@
+{
+  "name": "snack-counter-automation",
+  "version": "1.0.0",
+  "description": "Automates refilling the Oslo and Bengaluru snack counters: who buys, budget checks, and reimbursement tracking.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx src/demo.ts",
+    "build:web": "esbuild web/main.ts --bundle --format=iife --target=es2020 --outfile=docs/demo.js",
+    "web": "npm run build:web && open docs/index.html"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}
