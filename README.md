@@ -4,21 +4,21 @@ Automates keeping the Oslo and Bengaluru snack counters stocked: it picks exactl
 enforces each office's monthly budget; files and chases the HR reimbursement claim; and produces one monthly report
 across both currencies. People interact with it through the company chat tool.
 
-- **Live simulation:** [docs/index.html](docs/index.html). Open it in a browser; it runs the real core logic, no server needed.
+- **Scenarios in the browser:** [docs/index.html](docs/index.html). Seven one-click scenarios plus a sample management report, running the real core logic. No server needed.
 - **Design doc:** [docs/design.html](docs/design.html) (prints to 2 A4 pages) · [docs/DESIGN.md](docs/DESIGN.md) (same content, Markdown)
 ## Run it
 
 ```bash
 npm install
-npm test          # 65 tests
+npm test          # 67 tests
 npm run typecheck
 npm run demo      # a scripted month at both offices, printed as the chat transcript
-npm run web       # rebuild the browser bundle and open the live simulation
+npm run web       # rebuild the browser bundle and open the scenario page
 ```
 
 Requires Node 20+. No runtime dependencies.
 
-The simulation has one-click scenarios, which you can also open directly by URL:
+Each scenario can also be opened directly by URL:
 `docs/index.html#scenario=race` (two people tap "Yes" at once), `#scenario=silence` (nobody answers), `#scenario=lapse`
 (buyer forgets), `#scenario=visitor` (two-week visit), `#scenario=budget` (budget runs out), `#scenario=overLimit`,
 and `#scenario=month` (simulates all of November, then shows the report).
@@ -40,9 +40,9 @@ src/
   store/              in-memory refill store (optimistic concurrency) + directory/presence
   app.ts              wiring
   demo.ts             CLI simulation
-web/main.ts         browser simulation UI (bundled into docs/demo.js)
+web/main.ts         browser scenario player (bundled into docs/demo.js)
 tests/              Vitest specs, one file per area
-docs/               design doc, decision log, live simulation (GitHub Pages-ready)
+docs/               design doc and scenario page (static, ready to host)
 ```
 
 ## Where the brief's rules are proven
@@ -51,7 +51,7 @@ docs/               design doc, decision log, live simulation (GitHub Pages-read
 |---|---|
 | Two people cannot both commit to the same refill | `lifecycle.test.ts` › *two people cannot both commit…* (incl. 5 simultaneous commits → exactly 1 winner) |
 | Only one refill per office at a time, even with simultaneous reports | `lifecycle.test.ts` › *simultaneous empty reports create exactly one refill* |
-| A refill nobody completes is handed to someone else | `lifecycle.test.ts` › *a refill nobody completes…* (offer timeout, decline, missed deadline, broadcast, escalation) |
+| A refill nobody completes is handed to someone else | `lifecycle.test.ts` › *a refill nobody completes…* (offer timeout, decline, missed deadline, broadcast, escalation, office hours) |
 | Budgets and totals are correct across both currencies | `report.test.ts` (NOK + INR totals, conversion of totals only, rejected excluded, matches live budget), `budget.test.ts` |
 | Spend limit, reservation, on-hold, month rollover per time zone | `budget.test.ts` |
 | Fair choice of buyer, open-claims cap | `selection.test.ts` |

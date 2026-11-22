@@ -159,7 +159,7 @@
 </head>
 <body>
 <nav class="sitenav" aria-label="Pages">
-  <a href="index.html">Live simulation</a>
+  <a href="index.html">Scenarios</a>
   <a class="on" href="design.html">Design document</a>
 </nav>
 <main class="page">
@@ -175,7 +175,7 @@
     <div class="stat"><b>2</b><span>offices · NOK &amp; INR</span></div>
     <div class="stat"><b>~35</b><span>volunteers</span></div>
     <div class="stat"><b>1</b><span>buyer per refill, guaranteed</span></div>
-    <div class="stat"><b>65</b><span>automated tests</span></div>
+    <div class="stat"><b>67</b><span>automated tests</span></div>
   </div>
 </header>
 
@@ -253,7 +253,7 @@
     <li><strong>Commit.</strong> The first "Yes" wins atomically. The buyer gets a <em>spend limit</em> (reserved against the budget) and a <span class="chip">24 h deadline</span>. The channel is told "don't buy".</li>
     <li><strong>Buy.</strong> <span class="cmd">/snack bought R-OSL-7 845.50 &lt;receipt&gt; chips, fruit</span>. Within the limit, it goes straight to HR; over the limit, an admin approves it first.</li>
     <li><strong>Claim.</strong> Amount, currency, description, receipt and employee ID go to HR automatically. The bot polls, retries outages, tells the buyer the outcome, and chases claims older than <span class="chip">10 days</span>.</li>
-    <li><strong>Missed deadline.</strong> A reminder goes out <span class="chip">6 h before</span>. After the deadline the refill is handed on. A late buyer may still report their purchase until someone else commits.</li>
+    <li><strong>Missed deadline.</strong> A reminder goes out <span class="chip">6 h before</span>. After the deadline the refill is handed on. A late buyer may still report their purchase until someone else commits. Nudges wait for office hours <span class="chip">08–18, Mon–Fri</span>.</li>
   </ol>
 
   <div class="chat" aria-label="Example chat">
@@ -336,7 +336,7 @@
       <li>Stock or inventory tracking, sensors, snack voting</li>
       <li>Receipt OCR; HR checks the image anyway</li>
       <li>Company card or direct payments. It would remove the out-of-pocket problem, but that's a finance-policy change; recommended as a follow-up</li>
-      <li>A web dashboard (the live simulation is a demo for reviewers, not part of the product)</li>
+      <li>A web dashboard (the scenario page is a demo for reviewers, not part of the product)</li>
       <li>A rota or calendar sync; fair-share ranking replaces it</li>
       <li>Working-day and public-holiday calendars</li>
     </ul>
@@ -344,7 +344,7 @@
 </div>
 
 <footer>
-  <span>Code: TypeScript (<code>src/</code>) · Tests: Vitest (<code>tests/</code>) · Try it: <span class="screen-only"><a href="index.html">live simulation</a> or </span><code>npm run demo</code></span>
+  <span>Code: TypeScript (<code>src/</code>) · Tests: Vitest (<code>tests/</code>) · Try it: <span class="screen-only"><a href="index.html">scenarios</a> or </span><code>npm run demo</code></span>
   <span>Source: <a href="https://github.com/PritishMishraa/Snack-Counter-Automation">github.com/PritishMishraa/Snack-Counter-Automation</a></span>
 </footer>
 

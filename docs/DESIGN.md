@@ -1,7 +1,7 @@
 # Snack Counter Automation: Design
 
 **Scope:** Oslo (≈15 volunteers, 6 000 NOK/month) and Bengaluru (≈20 volunteers, 15 000 INR/month).
-**Code:** TypeScript, `src/`. **Tests:** `tests/` (65). **Try it:** [live simulation](index.html). **Source:** [github.com/PritishMishraa/Snack-Counter-Automation](https://github.com/PritishMishraa/Snack-Counter-Automation).
+**Code:** TypeScript, `src/`. **Tests:** `tests/` (67). **Try it:** [scenarios in the browser](index.html). **Source:** [github.com/PritishMishraa/Snack-Counter-Automation](https://github.com/PritishMishraa/Snack-Counter-Automation).
 
 ## 1. What "automate" means here
 
@@ -26,7 +26,7 @@ It runs inside the chat tool everyone already uses (slash commands and buttons),
 3. **Commit.** The first "Yes" wins atomically. The buyer gets a **spend limit** (reserved against the budget) and a **24 h deadline**. The channel is told *"Ada is refilling. Please don't buy"*.
 4. **Buy.** `/snack bought R-OSL-7 845.50 <receipt> chips, fruit`. If the amount is within the limit, the claim goes straight to HR. If it's over, an admin approves or rejects it first.
 5. **Claim.** The bot sends HR the amount, currency, description, receipt and employee ID, and tells the buyer the claim ID. It polls HR, DMs the buyer on approval or rejection, retries if HR is down, and chases any claim older than 10 days.
-6. **Missed deadline.** A reminder goes out 6 h before the deadline. When the deadline passes, the reservation is released and the next person is asked. If the late buyer did buy, they can still report it, but only until someone else commits.
+6. **Missed deadline.** A reminder goes out 6 h before the deadline. When the deadline passes, the reservation is released and the next person is asked. If the late buyer did buy, they can still report it, but only until someone else commits. All of these nudges wait for office hours (08:00–18:00 local time, Monday to Friday), so nobody is messaged at night or at the weekend.
 
 ## 3. Main parts and the data each keeps
 
@@ -72,6 +72,6 @@ disagree with each other. A test checks that the report and the live budget figu
 - Stock or inventory tracking, sensors, or a snack-voting system. "Box empty" plus item tags answers the question for a fraction of the effort.
 - Receipt OCR. The buyer types the amount and HR checks it against the image anyway.
 - A company card or paying volunteers directly. That would remove the out-of-pocket problem, but it's a finance-policy change, not software. I'd recommend it as a follow-up.
-- A web dashboard. The monthly report and `/snack status` cover what's needed today. (The live simulation is a demo for reviewers, not part of the product.)
+- A web dashboard. The monthly report and `/snack status` cover what's needed today. (The scenario page is a demo for reviewers, not part of the product.)
 - A rota or calendar sync. Fair-share ranking does the same job without anyone maintaining a schedule.
 - Working-day calendars and public holidays. Deadlines are 24 h wall-clock, and a weekend deadline just moves the refill on.
