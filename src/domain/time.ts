@@ -22,6 +22,18 @@ export function localDate(instant: Date, timeZone: string): LocalDate {
   return formatterFor(timeZone).format(instant);
 }
 
+const hourFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** 0–23 in the given time zone. */
+export function localHour(instant: Date, timeZone: string): number {
+  let f = hourFormatters.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', hourCycle: 'h23' });
+    hourFormatters.set(timeZone, f);
+  }
+  return Number(f.format(instant));
+}
+
 export function localMonth(instant: Date, timeZone: string): Month {
   return localDate(instant, timeZone).slice(0, 7);
 }

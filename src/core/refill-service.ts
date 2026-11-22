@@ -8,7 +8,7 @@ import {
   type RefillId,
 } from '../domain/model.js';
 import { compare, format, toDecimalString, zero, type Money } from '../domain/money.js';
-import { addMs, formatLocal, localDate, localMonth } from '../domain/time.js';
+import { addMs, formatLocal, localDate, localHour, localMonth, weekdayOf } from '../domain/time.js';
 import type { ChatAction, ChatPort, Clock, HrPort, IdGenerator } from '../ports.js';
 import type { Directory } from '../store/directory.js';
 import type { RefillStore } from '../store/refill-store.js';
@@ -303,6 +303,10 @@ export class RefillService {
 
   private async tickOne(refill: Refill): Promise<void> {
     const now = this.d.clock.now();
+    // Nudging people (next offer, reminder, hand-off, resuming a hold) waits for office hours,
+    // so nobody is messaged at 2 a.m. or on a Sunday. HR retries and polling run around the clock.
+    const nudges = refill.status === 'AWAITING_VOLUNTEER' || refill.status === 'COMMITTED' || refill.status === 'ON_HOLD_BUDGET';
+    if (nudges && !this.inOfficeHours(now, this.d.directory.office(refill.officeId))) return;
     switch (refill.status) {
       case 'AWAITING_VOLUNTEER': {
         if (refill.offer && now < refill.offer.expiresAt) return;
@@ -546,6 +550,12 @@ export class RefillService {
           ? `The snack box is already reported empty and ${this.name(r.offer.to)} has been asked to refill it (${r.id}).`
           : `The snack box is already reported empty and we're looking for a buyer (${r.id}).`;
     }
+  }
+
+  private inOfficeHours(instant: Date, office: Office): boolean {
+    const { start, end, days } = this.d.policy.officeHours;
+    const hour = localHour(instant, office.timeZone);
+    return days.includes(weekdayOf(localDate(instant, office.timeZone))) && hour >= start && hour < end;
   }
 
   private when(instant: Date, office: Office): string {

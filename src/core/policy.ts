@@ -1,4 +1,4 @@
-import { DAY, HOUR } from '../domain/time.js';
+import { DAY, HOUR, type Weekday } from '../domain/time.js';
 
 /** Tunable rules. Defaults are meant to be tuned from the "hours empty" figure in the monthly report. */
 export interface Policy {
@@ -20,6 +20,8 @@ export interface Policy {
   readonly claimOverdueMs: number;
   /** Failed HR submissions before an admin is told (retries continue regardless). */
   readonly claimAttemptsBeforeEscalation: number;
+  /** Local hours [start, end) and weekdays (0 = Sunday) during which the scheduler may nudge people. */
+  readonly officeHours: { readonly start: number; readonly end: number; readonly days: readonly Weekday[] };
 }
 
 export const DEFAULT_POLICY: Policy = {
@@ -32,4 +34,5 @@ export const DEFAULT_POLICY: Policy = {
   fairnessWindowMs: 30 * DAY,
   claimOverdueMs: 10 * DAY,
   claimAttemptsBeforeEscalation: 3,
+  officeHours: { start: 8, end: 18, days: [1, 2, 3, 4, 5] },
 };

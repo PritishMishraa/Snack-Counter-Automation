@@ -176,13 +176,17 @@ describe('a refill nobody completes is handed to someone else', () => {
     const { refill } = await app.service.reportEmpty('OSL', 'osl-4');
     await app.service.commit(refill.id, 'osl-1');
 
+    // The reminder is due 6 h before the deadline (03:00 Oslo), but waits for office hours.
     app.clock.advance(18 * HOUR);
+    await app.service.tick();
+    expect(app.chat.directTo('osl-1').at(-1)?.text).not.toContain('Reminder');
+    app.clock.advance(5 * HOUR); // 08:00 Oslo
     await app.service.tick();
     expect(app.chat.directTo('osl-1').at(-1)?.text).toContain('Reminder');
     const budgetWhileCommitted = await app.service.budget(app.directory.office('OSL'));
     expect(budgetWhileCommitted.reserved).toEqual(nok(1200));
 
-    app.clock.advance(6 * HOUR);
+    app.clock.advance(1 * HOUR);
     await app.service.tick();
     const after = await app.service.get(refill.id);
     expect(after.status).toBe('AWAITING_VOLUNTEER');
@@ -191,6 +195,38 @@ describe('a refill nobody completes is handed to someone else', () => {
     expect(after.lapsedBuyer).toBe('osl-1');
     // The reservation is released so it does not block the budget.
     expect((await app.service.budget(app.directory.office('OSL'))).reserved).toEqual(nok(0));
+  });
+
+  it('does not message anyone outside office hours: an offer expiring in the evening moves on next morning', async () => {
+    const app = makeApp({ start: '2026-11-02T16:30:00Z' }); // Monday 17:30 in Oslo
+    const { refill } = await app.service.reportEmpty('OSL', 'osl-4');
+    expect(refill.offer?.to).toBe('osl-1');
+    const before = app.chat.messages.length;
+
+    app.clock.set('2026-11-03T06:45:00Z'); // 07:45 Tuesday, offer long expired
+    await app.service.tick();
+    expect(app.chat.messages.length).toBe(before);
+    expect((await app.service.get(refill.id)).offer?.to).toBe('osl-1');
+
+    app.clock.set('2026-11-03T07:00:00Z'); // 08:00
+    await app.service.tick();
+    expect((await app.service.get(refill.id)).offer?.to).toBe('osl-2');
+  });
+
+  it('waits over the weekend too, and keeps HR polling running around the clock', async () => {
+    const app = makeApp({ start: '2026-11-06T15:30:00Z' }); // Friday 16:30 in Oslo
+    const bought = await completeRefill(app, 'OSL', 'osl-1', nok(500));
+    const { refill } = await app.service.reportEmpty('OSL', 'osl-4');
+    app.hr.approve(bought.claim!.claimId);
+
+    app.clock.set('2026-11-07T10:00:00Z'); // Saturday
+    await app.service.tick();
+    expect((await app.service.get(refill.id)).offer?.to).toBe(refill.offer?.to);
+    expect((await app.service.get(bought.id)).status).toBe('REIMBURSED');
+
+    app.clock.set('2026-11-09T07:00:00Z'); // Monday 08:00
+    await app.service.tick();
+    expect((await app.service.get(refill.id)).offer?.to).not.toBe(refill.offer?.to);
   });
 
   it('a late buyer can still report their purchase if nobody else has committed', async () => {

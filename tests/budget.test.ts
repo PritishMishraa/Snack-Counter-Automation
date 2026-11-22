@@ -50,8 +50,11 @@ describe('budget check', () => {
     await app.service.tick();
     expect((await app.service.get(refill.id)).status).toBe('ON_HOLD_BUDGET');
 
-    // 23:00 UTC is midnight in Oslo: December budget.
+    // 23:00 UTC is midnight in Oslo: December budget, but nobody is messaged until office hours.
     app.clock.set('2026-11-30T23:00:00Z');
+    await app.service.tick();
+    expect((await app.service.get(refill.id)).status).toBe('ON_HOLD_BUDGET');
+    app.clock.set('2026-12-01T07:00:00Z'); // 08:00 Tuesday in Oslo
     await app.service.tick();
     const resumed = await app.service.get(refill.id);
     expect(resumed.status).toBe('AWAITING_VOLUNTEER');

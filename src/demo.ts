@@ -64,7 +64,7 @@ const blrBuyer = (await service.get('R-BLR-1')).commitment!.buyer;
 await say(blrBuyer, '/snack bought R-BLR-1 2450 https://receipts/blr-1.jpg samosa, biscuits, banana chips');
 
 scene('3. Oslo: someone commits, then forgets; the refill is handed on');
-await passTime(4 * DAY);
+await passTime(18 * HOUR); // Tuesday morning
 await say('osl-4', '/snack empty');
 await say('osl-4', '/snack yes R-OSL-2');
 await passTime(24 * HOUR + 15 * MINUTE);
@@ -72,14 +72,14 @@ await say('osl-5', '/snack yes R-OSL-2');
 await say('osl-5', '/snack bought R-OSL-2 1120 https://receipts/osl-2.jpg chips, cola');
 
 scene('4. A Bengaluru volunteer visiting Oslo for a week refills there');
-await passTime(3 * DAY);
-await say('blr-1', '/snack visiting oslo 2026-11-10 2026-11-20');
+await passTime(DAY); // Thursday
+await say('blr-1', '/snack visiting oslo 2026-11-05 2026-11-13');
 await say('osl-2', '/snack empty');
 await say('blr-1', '/snack yes R-OSL-3');
 await say('blr-1', '/snack bought R-OSL-3 690 https://receipts/osl-3.jpg fruit, nuts');
 
 scene('5. Over the limit: an admin has to approve');
-await passTime(2 * DAY);
+await passTime(DAY); // Friday
 await say('blr-4', '/snack empty');
 await say('blr-4', '/snack yes R-BLR-2');
 await say('blr-4', '/snack bought R-BLR-2 3400 https://receipts/blr-2.jpg samosa, juice');
