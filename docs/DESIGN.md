@@ -72,6 +72,6 @@ disagree with each other. A test checks that the report and the live budget figu
 - Stock or inventory tracking, sensors, or a snack-voting system. "Box empty" plus item tags answers the question for a fraction of the effort.
 - Receipt OCR. The buyer types the amount and HR checks it against the image anyway.
 - A company card or paying volunteers directly. That would remove the out-of-pocket problem, but it's a finance-policy change, not software. I'd recommend it as a follow-up.
-- A web dashboard. The monthly report and `/snack status` cover what's needed today.
+- A web dashboard. The monthly report and `/snack status` cover what's needed today. (The live simulation is a demo for reviewers, not part of the product.)
 - A rota or calendar sync. Fair-share ranking does the same job without anyone maintaining a schedule.
 - Working-day calendars and public holidays. Deadlines are 24 h wall-clock, and a weekend deadline just moves the refill on.
