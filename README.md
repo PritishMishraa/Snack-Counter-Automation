@@ -4,8 +4,8 @@ Automates keeping the Oslo and Bengaluru snack counters stocked: it picks exactl
 enforces each office's monthly budget; files and chases the HR reimbursement claim; and produces one monthly report
 across both currencies. People interact with it through the company chat tool.
 
-- **Scenarios in the browser:** [docs/index.html](docs/index.html). Seven one-click scenarios plus a sample management report, running the real core logic. No server needed.
-- **Design doc:** [docs/design.html](docs/design.html) (prints to 2 A4 pages) · [docs/DESIGN.md](docs/DESIGN.md) (same content, Markdown)
+- **Scenarios in the browser:** [docs/scenarios.html](docs/scenarios.html). Seven one-click scenarios plus a sample management report, running the real core logic. No server needed.
+- **Design doc:** [docs/index.html](docs/index.html) (prints to 2 A4 pages) · [docs/DESIGN.md](docs/DESIGN.md) (same content, Markdown)
 ## Run it
 
 ```bash
@@ -19,7 +19,7 @@ npm run web       # rebuild the browser bundle and open the scenario page
 Requires Node 20+. No runtime dependencies.
 
 Each scenario can also be opened directly by URL:
-`docs/index.html#scenario=race` (two people tap "Yes" at once), `#scenario=silence` (nobody answers), `#scenario=lapse`
+`docs/scenarios.html#scenario=race` (two people tap "Yes" at once), `#scenario=silence` (nobody answers), `#scenario=lapse`
 (buyer forgets), `#scenario=visitor` (two-week visit), `#scenario=budget` (budget runs out), `#scenario=overLimit`,
 and `#scenario=month` (simulates all of November, then shows the report).
 
