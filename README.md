@@ -4,8 +4,8 @@ Automates keeping the Oslo and Bengaluru snack counters stocked: it picks exactl
 enforces each office's monthly budget; files and chases the HR reimbursement claim; and produces one monthly report
 across both currencies. People interact with it through the company chat tool.
 
-- **Scenarios in the browser:** [docs/scenarios.html](docs/scenarios.html). Seven one-click scenarios plus a sample management report, running the real core logic. No server needed.
-- **Design doc:** [docs/index.html](docs/index.html) (prints to 2 A4 pages) · [docs/DESIGN.md](docs/DESIGN.md) (same content, Markdown)
+- **Scenarios in the browser:** [framsikt-snack.pritish.in/scenarios.html](https://framsikt-snack.pritish.in/scenarios.html) (source: [docs/scenarios.html](docs/scenarios.html)). Seven one-click scenarios plus a sample management report, running the real core logic. No server needed.
+- **Design doc:** [framsikt-snack.pritish.in](https://framsikt-snack.pritish.in/) (source: [docs/index.html](docs/index.html); prints to 2 A4 pages) · [docs/DESIGN.md](docs/DESIGN.md) (same content, Markdown)
 ## Run it
 
 ```bash

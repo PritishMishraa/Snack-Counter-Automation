@@ -1,7 +1,7 @@
 # Snack Counter Automation: Design
 
 **Scope:** Oslo (≈15 volunteers, 6 000 NOK/month) and Bengaluru (≈20 volunteers, 15 000 INR/month).
-**Code:** TypeScript, `src/`. **Tests:** `tests/` (67). **Try it:** [scenarios in the browser](scenarios.html). **Source:** [github.com/PritishMishraa/Snack-Counter-Automation](https://github.com/PritishMishraa/Snack-Counter-Automation).
+**Code:** TypeScript, `src/`. **Tests:** `tests/` (67). **Try it:** [scenarios in the browser](https://framsikt-snack.pritish.in/scenarios.html). **Source:** [github.com/PritishMishraa/Snack-Counter-Automation](https://github.com/PritishMishraa/Snack-Counter-Automation).
 
 ## 1. What "automate" means here
 
