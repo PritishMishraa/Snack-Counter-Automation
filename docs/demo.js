@@ -86,6 +86,15 @@
   function localDate(instant, timeZone) {
     return formatterFor(timeZone).format(instant);
   }
+  var hourFormatters = /* @__PURE__ */ new Map();
+  function localHour(instant, timeZone) {
+    let f = hourFormatters.get(timeZone);
+    if (!f) {
+      f = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", hourCycle: "h23" });
+      hourFormatters.set(timeZone, f);
+    }
+    return Number(f.format(instant));
+  }
   function localMonth(instant, timeZone) {
     return localDate(instant, timeZone).slice(0, 7);
   }
@@ -321,7 +330,8 @@ ${HELP}`);
     maxOpenClaimsPerVolunteer: 2,
     fairnessWindowMs: 30 * DAY,
     claimOverdueMs: 10 * DAY,
-    claimAttemptsBeforeEscalation: 3
+    claimAttemptsBeforeEscalation: 3,
+    officeHours: { start: 8, end: 18, days: [1, 2, 3, 4, 5] }
   };
 
   // src/domain/model.ts
@@ -358,12 +368,12 @@ ${HELP}`);
   function rankCandidates(input) {
     const { office, today, now, policy } = input;
     const windowStart = now.getTime() - policy.fairnessWindowMs;
-    const busy2 = new Set(
+    const busy = new Set(
       input.refills.filter((r) => r.status === "COMMITTED" && r.commitment).map((r) => r.commitment.buyer)
     );
     const candidates = [];
     for (const v of input.volunteers) {
-      if (!v.active || input.exclude.has(v.employeeId) || busy2.has(v.employeeId)) continue;
+      if (!v.active || input.exclude.has(v.employeeId) || busy.has(v.employeeId)) continue;
       const tier = presenceTier(input.presenceOn(v.employeeId, today), v, office);
       if (tier === void 0) continue;
       const bought = input.refills.filter((r) => r.purchase?.buyer === v.employeeId);
@@ -592,9 +602,9 @@ ${HELP}`);
     }
     async status(officeId) {
       const office = this.d.directory.office(officeId);
-      const active2 = await this.d.store.findActive(office.id);
+      const active = await this.d.store.findActive(office.id);
       const pos = await this.budget(office);
-      const box = active2 ? this.describe(active2) : "The snack box is not reported empty.";
+      const box = active ? this.describe(active) : "The snack box is not reported empty.";
       return `${box} Budget ${pos.month}: ${format(pos.spent)} spent, ${format(pos.reserved)} reserved, ${format(pos.remaining)} left of ${format(pos.budget)}.`;
     }
     async budget(office) {
@@ -621,6 +631,8 @@ ${HELP}`);
     }
     async tickOne(refill) {
       const now = this.d.clock.now();
+      const nudges = refill.status === "AWAITING_VOLUNTEER" || refill.status === "COMMITTED" || refill.status === "ON_HOLD_BUDGET";
+      if (nudges && !this.inOfficeHours(now, this.d.directory.office(refill.officeId))) return;
       switch (refill.status) {
         case "AWAITING_VOLUNTEER": {
           if (refill.offer && now < refill.offer.expiresAt) return;
@@ -842,6 +854,11 @@ ${HELP}`);
         default:
           return r.offer?.to ? `The snack box is already reported empty and ${this.name(r.offer.to)} has been asked to refill it (${r.id}).` : `The snack box is already reported empty and we're looking for a buyer (${r.id}).`;
       }
+    }
+    inOfficeHours(instant, office) {
+      const { start, end, days } = this.d.policy.officeHours;
+      const hour = localHour(instant, office.timeZone);
+      return days.includes(weekdayOf(localDate(instant, office.timeZone))) && hour >= start && hour < end;
     }
     when(instant, office) {
       return `${formatLocal(instant, office.timeZone)} ${office.name} time`;
@@ -1172,9 +1189,9 @@ ${HELP}`);
     }
     async save(next, expectedVersion) {
       await tick();
-      const current = this.rows.get(next.id);
-      if (!current) throw new DomainError("NOT_FOUND", `Refill ${next.id} not found`);
-      if (current.version !== expectedVersion) {
+      const current2 = this.rows.get(next.id);
+      if (!current2) throw new DomainError("NOT_FOUND", `Refill ${next.id} not found`);
+      if (current2.version !== expectedVersion) {
         throw new DomainError("CONCURRENT_UPDATE", `Refill ${next.id} was changed by someone else`);
       }
       if (next.version !== expectedVersion + 1) throw new Error("Version must be incremented by exactly one");
@@ -1213,15 +1230,16 @@ ${HELP}`);
       return buildMonthlyReport(month, directory.listOffices(), await store.list(), rates, reportingCurrency);
     }
     async function sendMonthlyReport(month) {
-      const report = await monthlyReport(month);
-      await chat.postToChannel(managementChannel, renderReport(report));
-      return report;
+      const report2 = await monthlyReport(month);
+      await chat.postToChannel(managementChannel, renderReport(report2));
+      return report2;
     }
     return { clock, chat, hr, store, directory, policy, service, commands, monthlyReport, sendMonthlyReport };
   }
 
   // web/main.ts
   var START = "2026-11-02T08:00:00Z";
+  var OSLO = "Europe/Oslo";
   var VOLUNTEERS = [
     ...["Ada", "Bj\xF8rn", "Camilla", "Dag", "Eirin", "Fredrik"].map((name, i) => ({ employeeId: `osl-${i + 1}`, name, homeOfficeId: "OSL", active: true })),
     ...["Anil", "Bhavna", "Chetan", "Divya", "Esha", "Farhan", "Gauri"].map((name, i) => ({ employeeId: `blr-${i + 1}`, name, homeOfficeId: "BLR", active: true }))
@@ -1239,124 +1257,156 @@ ${HELP}`);
     ["blr-5", [1, 2, 3, 4]],
     ["blr-7", [1, 2]]
   ];
-  var app;
-  var feed = [];
-  var feedFilter = "all";
-  var hrAutoApprove = true;
-  var actingAs = "osl-4";
-  var busy = false;
-  var scenarioTitle = "";
-  var drafts = /* @__PURE__ */ new Map();
-  var root = document.getElementById("app");
-  function reset() {
-    app = createSnackApp({ start: START, volunteers: VOLUNTEERS });
-    feed = [];
-    drafts.clear();
-    scenarioTitle = "";
-    app.chat.onMessage((msg) => feed.push({ kind: "msg", at: app.clock.now(), msg }));
-    for (const [id, days] of PATTERNS) app.directory.setOfficeDays(id, days);
-    app.directory.setPresenceRange("osl-5", "2026-11-02", "2026-11-06", { kind: "holiday" });
-  }
-  async function say(who, text) {
-    const entry = { kind: "user", at: app.clock.now(), who, text };
-    feed.push(entry);
-    entry.reply = await app.commands.handle(who, text);
-    return entry.reply;
-  }
-  function note(text) {
-    feed.push({ kind: "note", at: app.clock.now(), text });
-  }
-  async function advance(ms) {
-    const end = app.clock.now().getTime() + ms;
-    while (app.clock.now().getTime() < end) {
-      app.clock.advance(Math.min(15 * MINUTE, end - app.clock.now().getTime()));
-      if (hrAutoApprove) app.hr.approveOlderThan(3 * DAY);
-      await app.service.tick();
+  var Sim = class {
+    constructor() {
+      __publicField(this, "app", createSnackApp({ start: START, volunteers: VOLUNTEERS }));
+      __publicField(this, "entries", []);
+      /** How long the simulated HR takes to approve a given claim (the brief says 1–10 days). */
+      __publicField(this, "hrApprovalMs", () => 3 * DAY);
+      __publicField(this, "muted", false);
+      this.app.chat.onMessage((msg) => {
+        if (!this.muted) this.entries.push({ kind: "bot", at: this.app.clock.now(), msg });
+      });
+      for (const [id, days] of PATTERNS) this.app.directory.setOfficeDays(id, days);
+      this.app.directory.setPresenceRange("osl-5", "2026-11-02", "2026-11-06", { kind: "holiday" });
     }
-  }
-  async function advanceTo(iso) {
-    await advance(new Date(iso).getTime() - app.clock.now().getTime());
-  }
-  async function active(officeId) {
-    return app.store.findActive(officeId);
-  }
+    /** Runs setup steps without adding them to the transcript. */
+    async quietly(fn) {
+      this.muted = true;
+      try {
+        await fn();
+      } finally {
+        this.muted = false;
+      }
+    }
+    async say(who, text) {
+      const entry2 = { kind: "user", at: this.app.clock.now(), who, text };
+      if (!this.muted) this.entries.push(entry2);
+      entry2.reply = await this.app.commands.handle(who, text);
+      return entry2.reply;
+    }
+    note(text) {
+      this.entries.push({ kind: "note", at: this.app.clock.now(), text });
+    }
+    /** Moves time forward in 15-minute steps, running the scheduler each step like a cron job. */
+    async advance(ms) {
+      const end = this.app.clock.now().getTime() + ms;
+      while (this.app.clock.now().getTime() < end) {
+        this.app.clock.advance(Math.min(15 * MINUTE, end - this.app.clock.now().getTime()));
+        const now = this.app.clock.now().getTime();
+        for (const c of this.app.hr.claims.values()) {
+          if (c.status.state === "PENDING" && now - c.createdAt.getTime() >= this.hrApprovalMs(c.id)) this.app.hr.approve(c.id);
+        }
+        await this.app.service.tick();
+      }
+    }
+    async advanceTo(iso) {
+      await this.advance(new Date(iso).getTime() - this.app.clock.now().getTime());
+    }
+    async active(officeId) {
+      return this.app.store.findActive(officeId);
+    }
+  };
   var SCENARIOS = {
     race: {
-      title: "Two people tap \u201CYes\u201D at the same moment",
-      async run() {
-        note("Dag finds the Oslo box empty. Ada and Bj\xF8rn both see the channel post and tap \u201CYes\u201D within milliseconds.");
-        await say("osl-4", "/snack empty");
-        const r = await active("OSL");
-        await Promise.all([say("osl-1", `/snack yes ${r.id}`), say("osl-2", `/snack yes ${r.id}`)]);
-        note("Exactly one commit wins (compare-and-set on the refill version). The other is told not to buy.");
+      title: "Two people tap \u201CYes\u201D at once",
+      summary: "Ada and Bj\xF8rn both offer to buy within the same millisecond.",
+      proves: "Only one buyer per refill",
+      async run(s) {
+        s.note("Dag finds the Oslo box empty. Ada and Bj\xF8rn both tap \u201CYes\u201D within milliseconds.");
+        await s.say("osl-4", "/snack empty");
+        const r = await s.active("OSL");
+        await Promise.all([s.say("osl-1", `/snack yes ${r.id}`), s.say("osl-2", `/snack yes ${r.id}`)]);
+        s.note("Exactly one commit wins (a compare-and-set on the refill\u2019s version). The other person is told not to buy.");
       }
     },
     silence: {
       title: "Nobody answers",
-      async run() {
-        note("The box is reported empty, and nobody answers their DM.");
-        await say("osl-4", "/snack empty");
-        for (let i = 0; i < 3; i++) await advance(2 * HOUR);
-        note("After three unanswered 2-hour offers, the refill is opened to the whole #snacks-oslo channel.");
-        await advance(4 * HOUR);
-        note("Still nobody after 4 hours: the channel is re-posted and the office manager is alerted.");
+      summary: "The box is reported empty and every DM goes unanswered.",
+      proves: "A stalled refill escalates",
+      async run(s) {
+        s.note("The box is reported empty, and nobody answers their DM.");
+        await s.say("osl-4", "/snack empty");
+        for (let i = 0; i < 3; i++) await s.advance(2 * HOUR);
+        s.note("After three unanswered 2-hour offers, the refill is opened to the whole #snacks-oslo channel.");
+        await s.advanceTo("2026-11-03T07:15:00Z");
+        s.note("Still nobody. The bot stays quiet overnight; at 08:00 the next morning it posts again and alerts the office manager.");
       }
     },
     lapse: {
       title: "Buyer commits, then forgets",
-      async run() {
-        await say("osl-4", "/snack empty");
-        const r = await active("OSL");
-        await say(r.offer.to, `/snack yes ${r.id}`);
-        note("The buyer has 24 hours. Fast-forward 18 hours\u2026");
-        await advance(18 * HOUR);
-        note("\u2026a reminder went out. Another 6 hours pass without a purchase.");
-        await advance(6 * HOUR);
-        note("The refill is handed to the next person and the budget reservation is released. The first buyer can still report a late purchase until someone else commits.");
+      summary: "Someone says \u201CYes\u201D, then never reports a purchase.",
+      proves: "Unfinished refills are handed on",
+      async run(s) {
+        await s.say("osl-4", "/snack empty");
+        const r = await s.active("OSL");
+        await s.say(r.offer.to, `/snack yes ${r.id}`);
+        s.note("The buyer has 24 hours. The reminder is due 6 hours before the deadline, at 03:00, so it waits for office hours\u2026");
+        await s.advance(23 * HOUR + 15 * MINUTE);
+        s.note("\u2026and goes out at 08:00 instead. The deadline at 09:00 passes without a purchase.");
+        await s.advance(45 * MINUTE);
+        s.note("The refill is handed to the next person and the budget reservation is released. The first buyer can still report a late purchase until someone else commits.");
       }
     },
     visitor: {
-      title: "A Bengaluru volunteer visits Oslo for two weeks",
-      async run() {
-        note("Anil will be in Oslo for two weeks. One command covers the whole trip, with no daily check-ins.");
-        await say("blr-1", "/snack visiting oslo 2026-11-02 2026-11-13");
-        await say("osl-4", "/snack empty");
-        await say("blr-3", "/snack empty");
-        note("Anil is a candidate in Oslo (he is physically there) and is skipped in Bengaluru, even though he is usually in on weekdays. If he buys in Oslo it is charged to Oslo\u2019s NOK budget; HR pays him in INR.");
+      title: "Visiting the other office",
+      summary: "Anil from Bengaluru works from Oslo for two weeks.",
+      proves: "People are asked where they are",
+      async run(s) {
+        s.note("Anil will be in Oslo for two weeks. One command covers the whole trip, with no daily check-ins.");
+        await s.say("blr-1", "/snack visiting oslo 2026-11-02 2026-11-13");
+        await s.say("osl-4", "/snack empty");
+        await s.say("blr-3", "/snack empty");
+        s.note("Anil is asked in Oslo, where he is, and skipped in Bengaluru even though he is usually in on weekdays. A purchase in Oslo is charged to Oslo\u2019s NOK budget; HR pays him in INR.");
       }
     },
     budget: {
-      title: "The monthly budget runs out",
-      async run() {
-        note("Five Oslo refills of 1 150 NOK use 5 750 of the 6 000 NOK budget\u2026");
-        const buyers = ["osl-1", "osl-2", "osl-3", "osl-4", "osl-6"];
-        for (const b of buyers) {
-          await say("osl-4", "/snack empty");
-          const r = await active("OSL");
-          await say(b, `/snack yes ${r.id}`);
-          await say(b, `/snack bought ${r.id} 1150 https://receipts/${r.id}.jpg chips, fruit`);
-          await advance(4 * HOUR);
-        }
-        await say("osl-4", "/snack empty");
-        note("Only 250 NOK is left, below a sensible minimum purchase (300 NOK), so the refill is put on hold and the office manager is told. Try \u201CJump to 1 Dec\u201D: it resumes automatically.");
+      title: "The budget runs out",
+      summary: "Five big refills use up most of Oslo\u2019s 6,000 NOK.",
+      proves: "Spending stays within budget",
+      async run(s) {
+        await s.quietly(async () => {
+          for (const b of ["osl-1", "osl-2", "osl-3", "osl-4", "osl-6"]) {
+            await s.say("osl-4", "/snack empty");
+            const r = await s.active("OSL");
+            await s.say(b, `/snack yes ${r.id}`);
+            await s.say(b, `/snack bought ${r.id} 1150 https://receipts/${r.id}.jpg chips, fruit`);
+            await s.advance(HOUR);
+          }
+        });
+        s.note("Earlier today, five refills of 1,150 NOK used 5,750 of Oslo\u2019s 6,000 NOK monthly budget. Now the box is empty again.");
+        await s.say("osl-4", "/snack status");
+        await s.say("osl-4", "/snack empty");
+        s.note("Only 250 NOK is left, below a sensible minimum purchase of 300 NOK, so the refill is put on hold and the manager is told. Fast-forward to December\u2026");
+        await s.quietly(() => s.advanceTo("2026-12-01T06:45:00Z"));
+        await s.advanceTo("2026-12-01T07:15:00Z");
+        s.note("The December budget starts at midnight in Oslo. The bot waits for office hours, then resumes the refill by itself.");
       }
     },
     overLimit: {
       title: "A receipt above the limit",
-      async run() {
-        await say("osl-4", "/snack empty");
-        const r = await active("OSL");
-        await say(r.offer.to, `/snack yes ${r.id}`);
-        await say(r.offer.to, `/snack bought ${r.id} 1480 https://receipts/${r.id}.jpg cake, coffee`);
-        note("1 480 NOK is above the 1 200 NOK pre-approved limit. It counts as spent, but the HR claim waits for the office manager. Approve or reject it under \u201CBack office\u201D.");
+      summary: "A buyer spends 1,480 NOK against a 1,200 NOK limit.",
+      proves: "Big receipts need a manager",
+      async run(s) {
+        await s.say("osl-4", "/snack empty");
+        const r = await s.active("OSL");
+        const buyer = r.offer.to;
+        await s.say(buyer, `/snack yes ${r.id}`);
+        await s.say(buyer, `/snack bought ${r.id} 1480 https://receipts/${r.id}.jpg cake, coffee`);
+        s.note("1,480 NOK is above the pre-approved limit, so the HR claim waits for the office manager.");
+        await s.advance(30 * MINUTE);
+        await s.say("osl-admin", `/snack approve ${r.id}`);
+        s.note("Approved: the claim goes to HR, and the 1,480 NOK counts against this month\u2019s budget.");
       }
     },
     month: {
-      title: "Simulate the whole of November",
-      async run() {
-        note("Simulating every working day of November at both offices: random empty boxes, some declines and timeouts, purchases within the typical range. HR approves claims after 3 days.");
-        await simulateMonth();
-        note("Done. The management report below now covers the whole month.");
+      title: "A whole month, both offices",
+      summary: "Every working day of November with random empties, declines and timeouts.",
+      proves: "One report in two currencies",
+      async run(s) {
+        s.note("Simulating November at both offices: boxes empty at random, some people decline or don\u2019t answer, and HR takes 1 to 10 days to approve each claim.");
+        await simulateMonth(s);
+        s.note("Done. The management report below is the result of this month.");
       }
     }
   };
@@ -1368,416 +1418,216 @@ ${HELP}`);
       return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
   }
-  async function simulateMonth() {
-    const rand = rng(42);
+  async function simulateMonth(s) {
+    const rand = rng(7);
+    s.hrApprovalMs = (id) => (1 + Number(id.replace(/\D/g, "")) * 37 % 10) * DAY;
     const items = {
       OSL: ["chips", "fruit", "kvikk lunsj", "nuts", "cola", "knekkebr\xF8d"],
       BLR: ["samosa", "biscuits", "banana chips", "chikki", "juice", "fruit"]
     };
     for (let day = 2; day <= 30; day++) {
       const date = `2026-11-${String(day).padStart(2, "0")}`;
-      await advanceTo(`${date}T07:30:00Z`);
+      await s.advanceTo(`${date}T07:30:00Z`);
       const weekday = (/* @__PURE__ */ new Date(`${date}T12:00:00Z`)).getUTCDay();
       if (weekday === 0 || weekday === 6) continue;
-      for (const office of app.directory.listOffices()) {
-        if (rand() > 0.42 || await active(office.id)) continue;
+      for (const office of s.app.directory.listOffices()) {
+        if (rand() > 0.34 || await s.active(office.id)) continue;
         const locals = VOLUNTEERS.filter((v) => v.homeOfficeId === office.id);
-        await say(locals[Math.floor(rand() * locals.length)].employeeId, `/snack empty ${office.id}`);
+        const pick = () => locals[Math.floor(rand() * locals.length)].employeeId;
+        await s.say(pick(), `/snack empty ${office.id}`);
         for (let attempt = 0; attempt < 6; attempt++) {
-          const r2 = await active(office.id);
+          const r2 = await s.active(office.id);
           if (!r2 || r2.status !== "AWAITING_VOLUNTEER") break;
-          const who = r2.offer?.to ?? locals[Math.floor(rand() * locals.length)].employeeId;
+          const who = r2.offer?.to ?? pick();
           const roll = rand();
           if (roll < 0.65) {
-            await say(who, `/snack yes ${r2.id}`);
+            await s.say(who, `/snack yes ${r2.id}`);
             break;
           }
-          if (roll < 0.85) await say(who, `/snack no ${r2.id}`);
-          else await advance(2 * HOUR);
+          if (roll < 0.85) await s.say(who, `/snack no ${r2.id}`);
+          else await s.advance(2 * HOUR);
         }
-        const r = await active(office.id);
+        const r = await s.active(office.id);
         if (r?.status !== "COMMITTED") continue;
-        const buyer = r.commitment.buyer;
         const [lo, hi] = office.currency === "NOK" ? [350, 1150] : [600, 2900];
-        const limit = r.commitment.spendLimit.minor / 100;
-        const amount = Math.min(Math.round((lo + rand() * (hi - lo)) / 10) * 10, Math.floor(limit));
-        const picked = items[office.id].filter(() => rand() < 0.4).join(", ") || items[office.id][0];
-        await advance(HOUR);
-        await say(buyer, `/snack bought ${r.id} ${amount} https://receipts/${r.id}.jpg ${picked}`);
+        const amount = Math.min(Math.round((lo + rand() * (hi - lo)) / 10) * 10, Math.floor(r.commitment.spendLimit.minor / 100));
+        const bought = items[office.id].filter(() => rand() < 0.4).join(", ") || items[office.id][0];
+        await s.advance(HOUR);
+        await s.say(r.commitment.buyer, `/snack bought ${r.id} ${amount} https://receipts/${r.id}.jpg ${bought}`);
       }
     }
-    await advanceTo("2026-11-30T17:00:00Z");
-  }
-  function personName(id) {
-    return app.directory.volunteer(id)?.name ?? ADMINS[id] ?? id;
-  }
-  function officeName(id) {
-    return app.directory.office(id).name;
-  }
-  function statsFor(id, refills, now) {
-    const bought = refills.filter((r) => r.purchase?.buyer === id);
-    return {
-      recent: bought.filter((r) => r.purchase.purchasedAt.getTime() >= now.getTime() - app.policy.fairnessWindowMs).length,
-      owed: bought.filter((r) => ["NEEDS_APPROVAL", "PURCHASED", "CLAIM_SUBMITTED"].includes(r.status)).length
-    };
-  }
-  function presenceKey(id, date) {
-    const p = app.directory.presenceOn(id, date);
-    if (!p) return "unknown";
-    return p.kind === "office" ? `office:${p.officeId}` : p.kind;
-  }
-  function presenceLabel(key2) {
-    if (key2.startsWith("office:")) return `In ${officeName(key2.slice(7))}`;
-    return { unknown: "Unknown", remote: "Remote", holiday: "On holiday" }[key2] ?? key2;
+    await s.advanceTo("2026-11-30T17:00:00Z");
   }
   function h(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   }
-  function when(d, office) {
-    return formatLocal(d, office.timeZone);
+  function personName(id) {
+    return VOLUNTEERS.find((v) => v.employeeId === id)?.name ?? ADMINS[id] ?? id;
   }
-  async function render() {
-    const refills = await app.store.list();
-    const now = app.clock.now();
-    const [osl, blr] = app.directory.listOffices();
-    const report = await app.monthlyReport(localMonth(now, osl.timeZone));
-    root.innerHTML = `
-    <section class="controls">
-      <div class="clock">
-        <div class="clock-main">${h(formatLocal(now, osl.timeZone))} <span>Oslo</span></div>
-        <div class="clock-sub">${h(formatLocal(now, blr.timeZone))} Bengaluru</div>
-      </div>
-      <div class="btn-group" role="group" aria-label="Advance time">
-        <button data-act="advance" data-ms="${15 * MINUTE}">+15 min</button>
-        <button data-act="advance" data-ms="${2 * HOUR}">+2 h</button>
-        <button data-act="advance" data-ms="${6 * HOUR}">+6 h</button>
-        <button data-act="advance" data-ms="${DAY}">+1 day</button>
-        <button data-act="jump-month">Jump to 1 Dec</button>
-      </div>
-      <label class="toggle"><input type="checkbox" data-act="hr-auto" ${hrAutoApprove ? "checked" : ""}/> HR approves claims after 3 days</label>
-      <button class="ghost" data-act="reset">Reset</button>
-    </section>
-
-    <section class="scenarios">
-      <span class="scenarios-label">Try a scenario</span>
-      ${Object.entries(SCENARIOS).map(([k, s]) => `<button class="chip-btn ${scenarioTitle === s.title ? "on" : ""}" data-act="scenario" data-key="${k}">${h(s.title)}</button>`).join("")}
-    </section>
-
-    <div class="layout">
-      <div class="col-main">
-        ${officeCard(osl, refills, now)}
-        ${officeCard(blr, refills, now)}
-        ${backOffice(refills)}
-        ${reportPanel(report)}
-      </div>
-      <aside class="col-feed">${feedPanel()}</aside>
-    </div>`;
-    const list = root.querySelector(".feed-list");
-    if (list) list.scrollTop = list.scrollHeight;
+  function avatar(id) {
+    if (id === "bot") return `<span class="avatar bot" aria-hidden="true">S</span>`;
+    const cls = id.startsWith("osl") ? "osl" : id.startsWith("blr") ? "blr" : "admin";
+    return `<span class="avatar ${cls}" aria-hidden="true">${h(personName(id).charAt(0))}</span>`;
   }
-  function officeCard(office, refills, now) {
-    const today = localDate(now, office.timeZone);
-    const refill = refills.find((r) => r.officeId === office.id && ACTIVE_STATUSES.has(r.status));
-    const pos = budgetPosition(office, localMonth(now, office.timeZone), refills);
-    const ranked = rankCandidates({
-      office,
-      today,
-      now,
-      volunteers: app.directory.listVolunteers(),
-      presenceOn: (id, d) => app.directory.presenceOn(id, d),
-      refills,
-      exclude: new Set(refill?.passedOver ?? []),
-      policy: app.policy
-    });
-    const rank = new Map(ranked.map((c, i) => [c.employeeId, i + 1]));
-    const busyElsewhere = new Set(refills.filter((r) => r.status === "COMMITTED" && r.officeId !== office.id).map((r) => r.commitment.buyer));
-    const people = VOLUNTEERS.filter((v) => {
-      const key2 = presenceKey(v.employeeId, today);
-      return v.homeOfficeId === office.id || key2 === `office:${office.id}`;
-    });
-    const pct2 = (m) => Math.max(0, Math.min(100, m.minor / pos.budget.minor * 100));
-    return `
-  <section class="card office">
-    <header class="office-head">
-      <div>
-        <h2>${h(office.name)} <small>${h(office.currency)} \xB7 ${h(office.channel)}</small></h2>
-        <div class="box-line">${boxStatus(office, refill)}</div>
-      </div>
-      <button class="primary" data-act="empty" data-office="${office.id}" ${refill ? "disabled" : ""}>Report box empty</button>
-    </header>
-
-    <div class="budget" aria-label="Budget">
-      <div class="bar">
-        <span class="spent" style="width:${pct2(pos.spent)}%"></span><span class="reserved" style="width:${pct2(pos.reserved)}%"></span>
-      </div>
-      <div class="budget-legend">
-        <span><i class="dot spent"></i>${h(format(pos.spent))} spent</span>
-        <span><i class="dot reserved"></i>${h(format(pos.reserved))} reserved</span>
-        <span class="${pos.remaining.minor < office.minPurchase.minor ? "low" : ""}"><b>${h(format(pos.remaining))}</b> left of ${h(format(pos.budget))} in ${h(pos.month)}</span>
-      </div>
-    </div>
-
-    <table class="people">
-      <thead><tr><th>Volunteer</th><th>Today</th><th>Usual days</th><th class="num">Refills (30 d)</th><th class="num">Owed</th><th>Who's asked next</th><th></th></tr></thead>
-      <tbody>${people.map((v) => personRow(v, office, today, refill, refills, now, rank, busyElsewhere)).join("")}</tbody>
-    </table>
-  </section>`;
+  var timeFmt = new Intl.DateTimeFormat("en-GB", { timeZone: OSLO, hour: "2-digit", minute: "2-digit", hour12: false });
+  var dayFmt = new Intl.DateTimeFormat("en-GB", { timeZone: OSLO, weekday: "long", day: "numeric", month: "long" });
+  function richText(text) {
+    return h(text).replace(/\b(R-(?:OSL|BLR)-\d+|HR-\d+)\b/g, '<span class="ref">$1</span>').replace(/(\d[\d,]*\.\d{2} (?:NOK|INR))/g, '<b class="amt">$1</b>');
   }
-  function boxStatus(office, r) {
-    if (!r) return `<span class="pill ok">Stocked</span>`;
-    switch (r.status) {
-      case "AWAITING_VOLUNTEER":
-        return r.offer?.to ? `<span class="pill warn">Empty</span> Asked <b>${h(personName(r.offer.to))}</b>, who has until ${h(when(r.offer.expiresAt, office))} to answer \xB7 ${r.id}` : `<span class="pill warn">Empty</span> Open to everyone in ${h(office.channel)} until ${h(when(r.offer?.expiresAt ?? /* @__PURE__ */ new Date(), office))}${r.escalated ? " \xB7 <b>manager alerted</b>" : ""} \xB7 ${r.id}`;
-      case "COMMITTED":
-        return `<span class="pill info">Being refilled</span> <b>${h(personName(r.commitment.buyer))}</b> is buying, up to ${h(format(r.commitment.spendLimit))}, by ${h(when(r.commitment.dueAt, office))} \xB7 ${r.id}`;
-      case "ON_HOLD_BUDGET":
-        return `<span class="pill bad">On hold</span> This month's budget is used up. Resumes automatically next month \xB7 ${r.id}`;
-      default:
-        return "";
-    }
-  }
-  function personRow(v, office, today, r, refills, now, rank, busyElsewhere) {
-    const id = v.employeeId;
-    const key2 = presenceKey(id, today);
-    const s = statsFor(id, refills, now);
-    const days = app.directory.usualOfficeDays(id);
-    const visitor = v.homeOfficeId !== office.id;
-    const away = key2.startsWith("office:") && key2 !== `office:${office.id}`;
-    let next;
-    const n = rank.get(id);
-    if (n !== void 0) next = n === 1 ? `<span class="pill info">1st</span>` : `${n}${n === 2 ? "nd" : n === 3 ? "rd" : "th"}`;
-    else if (r?.passedOver.includes(id)) next = '<span class="muted">passed this time</span>';
-    else if (key2 === "holiday" || key2 === "remote" || away) next = `<span class="muted">skipped: ${h(presenceLabel(key2).toLowerCase())}</span>`;
-    else if (s.owed >= app.policy.maxOpenClaimsPerVolunteer) next = `<span class="muted">skipped: owed for ${s.owed} refills</span>`;
-    else if (busyElsewhere.has(id) || r?.status === "COMMITTED" && r.commitment.buyer === id) next = '<span class="muted">buying</span>';
-    else next = '<span class="muted">-</span>';
-    const options = ["unknown", "office:OSL", "office:BLR", "remote", "holiday"].map((k) => `<option value="${k}" ${k === key2 ? "selected" : ""}>${h(k === "unknown" && days ? "Usual pattern" : presenceLabel(k))}</option>`).join("");
-    return `
-  <tr class="${away ? "away" : ""} ${r?.offer?.to === id ? "asked" : ""}">
-    <td><b>${h(v.name)}</b>${visitor ? ` <span class="tag">from ${h(officeName(v.homeOfficeId))}</span>` : ""}</td>
-    <td><select data-act="presence" data-who="${id}" data-office="${office.id}" aria-label="${h(v.name)} today">${options}</select></td>
-    <td class="muted">${days ? days.map((d) => WEEKDAYS[d]).join(" ") : "-"}</td>
-    <td class="num">${s.recent}</td>
-    <td class="num">${s.owed || "-"}</td>
-    <td>${next}</td>
-    <td class="actions">${away ? "" : personActions(id, office, r)}</td>
-  </tr>`;
-  }
-  function personActions(id, office, r) {
-    if (!r) return "";
-    if (r.status === "AWAITING_VOLUNTEER") {
-      if (r.offer?.to === id) {
-        return `<button class="small ok" data-act="cmd" data-who="${id}" data-cmd="/snack yes ${r.id}">Yes, I'll buy</button>
-              <button class="small" data-act="cmd" data-who="${id}" data-cmd="/snack no ${r.id}">Can't today</button>`;
+  function transcript(entries) {
+    let lastDay = "";
+    let i = 0;
+    const rows = [];
+    for (const e of entries) {
+      const day = localDate(e.at, OSLO);
+      if (day !== lastDay) {
+        rows.push(`<div class="day" style="--i:${i++}"><span>${h(dayFmt.format(e.at))}</span></div>`);
+        lastDay = day;
       }
-      if (r.lapsedBuyer === id) return boughtForm(id, office, r, "Report late purchase");
-      return `<button class="small" data-act="cmd" data-who="${id}" data-cmd="/snack yes ${r.id}">Step in</button>`;
+      rows.push(entry(e, i++));
     }
-    if (r.status === "COMMITTED" && r.commitment.buyer === id) {
-      return `${boughtForm(id, office, r, "Bought")}<button class="small" data-act="cmd" data-who="${id}" data-cmd="/snack release ${r.id}">Release</button>`;
+    return rows.join("");
+  }
+  function entry(e, i) {
+    const time = `<time>${h(timeFmt.format(e.at))}</time>`;
+    const style = `style="--i:${Math.min(i, 60)}"`;
+    if (e.kind === "note") {
+      return `<div class="note" ${style}><span class="note-mark" aria-hidden="true"></span><p>${h(e.text)}</p></div>`;
     }
-    return "";
-  }
-  function boughtForm(id, office, r, label) {
-    const amountKey = `amount:${r.id}`;
-    const itemsKey = `items:${r.id}`;
-    const amount = drafts.get(amountKey) ?? (office.currency === "NOK" ? "845.50" : "2450");
-    const items = drafts.get(itemsKey) ?? (office.currency === "NOK" ? "chips, fruit" : "samosa, biscuits");
-    return `<span class="bought">
-    <input class="amt" data-draft="${amountKey}" value="${h(amount)}" aria-label="Amount in ${office.currency}" />
-    <input class="items" data-draft="${itemsKey}" value="${h(items)}" aria-label="Items" />
-    <button class="small ok" data-act="bought" data-who="${id}" data-refill="${r.id}">${h(label)}</button>
-  </span>`;
-  }
-  function backOffice(refills) {
-    const approvals = refills.filter((r) => r.status === "NEEDS_APPROVAL");
-    const claims = [...app.hr.claims.values()].reverse();
-    const now = app.clock.now().getTime();
-    return `
-  <section class="card">
-    <h2>Back office <small>office managers and the simulated HR system</small></h2>
-    ${approvals.length ? approvals.map((r) => {
-      const admin = app.directory.office(r.officeId).admins[0];
-      return `<div class="approval"><span class="pill warn">Needs approval</span>
-                <b>${h(personName(r.purchase.buyer))}</b> spent ${h(format(r.purchase.amount))} on ${r.id}, above the ${h(format(r.commitment?.spendLimit ?? app.directory.office(r.officeId).maxPurchase))} limit
-                <span class="spacer"></span>
-                <button class="small ok" data-act="cmd" data-who="${admin}" data-cmd="/snack approve ${r.id}">Approve as manager</button>
-                <button class="small" data-act="cmd" data-who="${admin}" data-cmd="/snack reject ${r.id} not a snack refill">Reject</button></div>`;
-    }).join("") : ""}
-    ${claims.length ? `<table class="claims"><thead><tr><th>HR claim</th><th>Employee</th><th class="num">Amount</th><th>Description</th><th>Age</th><th>Status</th><th></th></tr></thead><tbody>
-        ${claims.map(
-      (c) => `<tr><td>${c.id}</td><td>${h(personName(c.request.employeeId))} <span class="muted">${h(c.request.employeeId)}</span></td>
-              <td class="num">${h(c.request.amount)} ${c.request.currency}</td><td class="muted desc">${h(c.request.description)}</td>
-              <td class="muted">${Math.floor((now - c.createdAt.getTime()) / DAY)} d</td>
-              <td>${c.status.state === "PENDING" ? '<span class="pill">Pending</span>' : c.status.state === "APPROVED" ? '<span class="pill ok">Approved</span>' : '<span class="pill bad">Rejected</span>'}</td>
-              <td class="actions">${c.status.state === "PENDING" ? `<button class="small ok" data-act="hr-approve" data-claim="${c.id}">Approve</button><button class="small" data-act="hr-reject" data-claim="${c.id}">Reject</button>` : ""}</td></tr>`
-    ).join("")}</tbody></table>` : '<p class="muted empty">No claims yet. They appear here the moment a buyer reports a purchase.</p>'}
-  </section>`;
-  }
-  function reportPanel(r) {
-    const row = (o) => `
-    <tr><td><b>${h(o.office)}</b></td><td class="num">${h(format(o.budget))}</td><td class="num">${h(format(o.spent))}</td>
-    <td class="num">${o.utilisationPct}%</td><td class="num">${h(format(o.reimbursed))}</td><td class="num">${h(format(o.awaitingReimbursement))}</td>
-    <td class="num">${o.refills}</td><td class="num">${o.avgHoursEmpty ?? "-"}</td><td class="items-cell">${h(o.topItems.slice(0, 3).map((t) => t.item).join(", ") || "-")}</td>
-    <td class="num">${h(format(o.spentConverted))}</td></tr>`;
-    return `
-  <section class="card">
-    <header class="row-between"><h2>Management report \xB7 ${h(r.month)} <small>one report, both offices</small></h2>
-      <button class="small" data-act="post-report">Post to #snack-reports</button></header>
-    <table class="report"><thead><tr><th>Office</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Used</th><th class="num">Reimbursed</th><th class="num">Awaiting</th><th class="num">Refills</th><th class="num">Hours empty</th><th>Top items</th><th class="num">In ${r.reportingCurrency}</th></tr></thead>
-    <tbody>${r.offices.map(row).join("")}</tbody>
-    <tfoot><tr><td>Total</td><td class="num">${h(format(r.total.budget))}</td><td class="num">${h(format(r.total.spent))}</td><td class="num">${r.total.utilisationPct}%</td>
-      <td class="num">${h(format(r.total.reimbursed))}</td><td class="num">${h(format(r.total.awaitingReimbursement))}</td><td colspan="3"></td><td class="num">${h(format(r.total.spent))}</td></tr></tfoot></table>
-    <p class="muted fine">Each office is totalled exactly in its own currency; only the totals are converted, at the month's rate (1 INR = ${r.offices[1]?.rate} NOK). \u201CHours empty\u201D is the average time from \u201Creported empty\u201D to \u201Cbought\u201D.</p>
-  </section>`;
-  }
-  function feedPanel() {
-    const entries = feed.filter((e) => feedFilter === "all" || e.kind !== "msg" || (feedFilter === "channels" ? e.msg.kind === "channel" : e.msg.kind === "direct")).slice(-250);
-    const people = [...VOLUNTEERS.map((v) => v.employeeId), ...Object.keys(ADMINS)];
-    return `
-  <section class="card feed">
-    <header class="feed-head">
-      <h2>Chat</h2>
-      <div class="tabs" role="tablist">
-        ${["all", "channels", "dms"].map((f) => `<button role="tab" class="${feedFilter === f ? "on" : ""}" data-act="filter" data-filter="${f}">${{ all: "Everything", channels: "Channels", dms: "Direct messages" }[f]}</button>`).join("")}
-      </div>
-    </header>
-    <div class="feed-list">${entries.length ? entries.map(feedEntry).join("") : `<p class="muted empty">Pick a scenario above, or press \u201CReport box empty\u201D. Every message here is sent by the real bot logic through the simulated chat tool.</p>`}</div>
-    <form class="composer" data-act="compose">
-      <select data-act="acting-as" aria-label="Acting as">${people.map((p) => `<option value="${p}" ${p === actingAs ? "selected" : ""}>${h(personName(p))}</option>`).join("")}</select>
-      <input name="cmd" data-draft="composer" placeholder="/snack help" value="${h(drafts.get("composer") ?? "")}" autocomplete="off" />
-      <button class="primary small" type="submit">Send</button>
-    </form>
-  </section>`;
-  }
-  function feedEntry(e) {
-    const t = `<time>${h(formatLocal(e.at, "Europe/Oslo").replace(/^\w+ /, ""))}</time>`;
-    if (e.kind === "note") return `<div class="entry note">${t}<div>${h(e.text)}</div></div>`;
     if (e.kind === "user") {
-      return `<div class="entry user">${t}<div><b>${h(personName(e.who))}</b> <code>${h(e.text)}</code>${e.reply ? `<div class="reply">\u21B3 ${h(e.reply.split("\n")[0])}</div>` : ""}</div></div>`;
+      return `<div class="msg" ${style}>${avatar(e.who)}<div class="body">
+      <div class="meta"><b>${h(personName(e.who))}</b>${time}</div>
+      <code class="cmd">${h(e.text)}</code>
+      ${e.reply ? `<div class="reply">${richText(e.reply.split("\n")[0])}</div>` : ""}
+    </div></div>`;
     }
     const m = e.msg;
-    const where = m.kind === "channel" ? `<span class="where ch">${h(m.to)}</span>` : `<span class="where dm">DM \u2192 ${h(personName(m.to))}</span>`;
-    const buttons = m.actions.filter((a) => !a.command.includes("<")).map((a) => `<button class="small" data-act="cmd" data-who="${m.kind === "direct" ? m.to : ""}" data-cmd="${h(a.command)}">${h(a.label)}</button>`).join("");
-    return `<div class="entry bot">${t}<div>${where}<div class="text">${h(m.text)}</div>${buttons ? `<div class="msg-btns">${buttons}</div>` : ""}</div></div>`;
+    const where = m.kind === "channel" ? `<span class="where channel">${h(m.to)}</span>` : `<span class="where dm">DM to ${h(personName(m.to))}</span>`;
+    const buttons = m.actions.filter((a) => !a.command.includes("<"));
+    return `<div class="msg bot ${m.kind}" ${style}>${avatar("bot")}<div class="body">
+    <div class="meta"><b>Snack bot</b>${where}${time}</div>
+    <div class="text">${richText(m.text)}</div>
+    ${buttons.length ? `<div class="buttons">${buttons.map((a) => `<span class="fake-btn">${h(a.label)}</span>`).join("")}</div>` : ""}
+  </div></div>`;
   }
-  async function run(fn) {
-    if (busy) return;
-    busy = true;
-    document.body.classList.add("busy");
-    try {
-      await fn();
-    } catch (e) {
-      note(`Error: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      busy = false;
-      document.body.classList.remove("busy");
-      await render();
-    }
+  async function monthSummary(s) {
+    const refills = await s.app.store.list();
+    const events = refills.flatMap((r) => r.history.map((e) => e.type));
+    const count = (t) => events.filter((e) => e === t).length;
+    const tiles = [
+      ["Refills bought", refills.filter((r) => r.purchase).length],
+      ["Direct offers sent", count("OFFERED")],
+      ["Declined", count("DECLINED")],
+      ["Unanswered, passed on", count("OFFER_EXPIRED")],
+      ["HR claims filed", s.app.hr.claims.size],
+      ["Chat messages", s.entries.filter((e) => e.kind === "bot").length]
+    ];
+    const tail = s.entries.filter((e) => e.kind !== "note").slice(-8);
+    return `
+    <div class="tiles">${tiles.map(([label, n]) => `<div class="tile"><b>${n}</b><span>${h(label)}</span></div>`).join("")}</div>
+    <p class="tail-label">The last few messages of the month</p>
+    ${transcript(tail)}
+    <a class="to-report" href="#report">See the management report \u2193</a>`;
   }
-  root.addEventListener("click", (ev) => {
-    const el = ev.target.closest("button[data-act]");
-    if (!el) return;
-    const d = el.dataset;
-    switch (d.act) {
-      case "advance":
-        return void run(() => advance(Number(d.ms)));
-      case "jump-month":
-        return void run(async () => {
-          if (app.clock.now() < /* @__PURE__ */ new Date("2026-11-30T23:15:00Z")) await advanceTo("2026-11-30T23:15:00Z");
-          else await advance(DAY);
-        });
-      case "reset":
-        history.replaceState(null, "", location.pathname);
-        return void run(async () => reset());
-      case "scenario":
-        history.replaceState(null, "", `#scenario=${d.key}`);
-        return void run(() => runScenario(d.key));
-      case "empty":
-        return void run(async () => {
-          const office = app.directory.office(d.office);
-          const reporter = VOLUNTEERS.find((v) => presenceKey(v.employeeId, localDate(app.clock.now(), office.timeZone)) === `office:${office.id}`) ?? VOLUNTEERS.find((v) => v.homeOfficeId === office.id);
-          await say(reporter.employeeId, `/snack empty ${office.id}`);
-        });
-      case "cmd":
-        return void run(async () => {
-          await say(d.who || actingAs, d.cmd);
-        });
-      case "bought":
-        return void run(async () => {
-          const amount = (drafts.get(`amount:${d.refill}`) ?? root.querySelector(`[data-draft="amount:${d.refill}"]`)?.value ?? "").trim();
-          const items = (drafts.get(`items:${d.refill}`) ?? root.querySelector(`[data-draft="items:${d.refill}"]`)?.value ?? "").trim();
-          await say(d.who, `/snack bought ${d.refill} ${amount} https://receipts/${d.refill}.jpg ${items}`);
-        });
-      case "hr-approve":
-        return void run(async () => {
-          app.hr.approve(d.claim);
-          note(`HR approved ${d.claim}. The bot picks this up on its next poll.`);
-          await app.service.tick();
-        });
-      case "hr-reject":
-        return void run(async () => {
-          app.hr.reject(d.claim, "receipt is unreadable");
-          note(`HR rejected ${d.claim}.`);
-          await app.service.tick();
-        });
-      case "filter":
-        feedFilter = d.filter;
-        return void render();
-      case "post-report":
-        return void run(async () => {
-          await app.sendMonthlyReport(localMonth(app.clock.now(), "Europe/Oslo"));
-        });
-    }
-  });
-  root.addEventListener("change", (ev) => {
-    const el = ev.target;
-    const d = el.dataset;
-    if (d.act === "hr-auto") {
-      hrAutoApprove = el.checked;
-      return;
-    }
-    if (d.act === "acting-as") {
-      actingAs = el.value;
-      return;
-    }
-    if (d.act === "presence") {
-      const who = d.who;
-      const office = app.directory.office(d.office);
-      const today = localDate(app.clock.now(), office.timeZone);
-      void run(async () => {
-        if (el.value === "unknown") {
-          app.directory.clearPresence(who, today);
-          note(`${personName(who)} is back to their usual pattern today.`);
-        } else if (el.value.startsWith("office:")) await say(who, `/snack here ${el.value.slice(7)}`);
-        else if (el.value === "remote") await say(who, "/snack remote");
-        else await say(who, `/snack holiday ${today}`);
-      });
-    }
-  });
-  root.addEventListener("input", (ev) => {
-    const el = ev.target;
-    if (el.dataset.draft) drafts.set(el.dataset.draft, el.value);
-  });
-  root.addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    const text = (drafts.get("composer") ?? "").trim();
-    if (!text) return;
-    drafts.delete("composer");
-    void run(async () => {
-      await say(actingAs, text.startsWith("/snack") ? text : `/snack ${text}`);
-    });
-  });
-  async function runScenario(key2) {
-    const s = SCENARIOS[key2];
-    if (!s) return;
-    reset();
-    scenarioTitle = s.title;
-    note(`Scenario: ${s.title}`);
-    await s.run();
+  function pct2(part, whole) {
+    return whole.minor ? Math.min(100, part.minor / whole.minor * 100) : 0;
   }
-  reset();
+  function officeBlock(o, reporting) {
+    const reimbursedPct = pct2(o.reimbursed, o.budget);
+    const awaitingPct = pct2(o.awaitingReimbursement, o.budget);
+    const buyers = Object.entries(o.refillsByVolunteer).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    return `
+  <div class="office">
+    <div class="office-top">
+      <div><h3>${h(o.office)}</h3><span class="muted">${h(o.currency)} budget</span></div>
+      <div class="office-figure"><b>${h(format(o.spent))}</b><span>of ${h(format(o.budget))} \xB7 ${o.utilisationPct}%</span></div>
+    </div>
+    <div class="bar" role="img" aria-label="${o.utilisationPct}% of budget used">
+      <span class="reimbursed" style="width:${reimbursedPct}%"></span><span class="awaiting" style="width:${awaitingPct}%"></span>
+    </div>
+    <dl class="facts">
+      <div><dt>Reimbursed</dt><dd>${h(format(o.reimbursed))}</dd></div>
+      <div><dt>Awaiting HR</dt><dd>${h(format(o.awaitingReimbursement))}</dd></div>
+      <div><dt>Refills</dt><dd>${o.refills}</dd></div>
+      <div><dt>Box empty, avg</dt><dd>${o.avgHoursEmpty ?? "-"} h</dd></div>
+      ${o.currency !== reporting ? `<div><dt>In ${h(reporting)}</dt><dd>${h(format(o.spentConverted))}</dd></div>` : ""}
+    </dl>
+    <div class="lists">
+      <div><h4>Most bought</h4><ol class="items">${o.topItems.slice(0, 4).map((t) => `<li>${h(t.item)} <span>${t.refills}\xD7</span></li>`).join("")}</ol></div>
+      <div><h4>Refills per volunteer</h4><ul class="buyers">${buyers.map(([id, n]) => `<li>${avatar(id)}${h(personName(id))} <span>${n}</span></li>`).join("")}</ul></div>
+    </div>
+  </div>`;
+  }
+  function reportCard(r) {
+    const monthName = (/* @__PURE__ */ new Date(`${r.month}-15T12:00:00Z`)).toLocaleString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+    const refills = r.offices.reduce((n, o) => n + o.refills, 0);
+    return `
+  <header class="report-head">
+    <div>
+      <span class="eyebrow">Posted to #snack-reports on 1 December</span>
+      <h2>Snack spending, ${h(monthName)}</h2>
+    </div>
+    <span class="sample">Sample data</span>
+  </header>
+  <div class="kpis">
+    <div class="kpi main"><span>Total spent, both offices</span><b>${h(format(r.total.spent))}</b><em>${r.total.utilisationPct}% of ${h(format(r.total.budget))}</em></div>
+    <div class="kpi"><span>Reimbursed</span><b>${h(format(r.total.reimbursed))}</b></div>
+    <div class="kpi"><span>Awaiting HR</span><b>${h(format(r.total.awaitingReimbursement))}</b></div>
+    <div class="kpi"><span>Refills</span><b>${refills}</b></div>
+  </div>
+  <div class="offices">${r.offices.map((o) => officeBlock(o, r.reportingCurrency)).join("")}</div>
+  <p class="footnote">Each office is totalled exactly in its own currency; only the totals are converted, at the month\u2019s rate
+    (1 INR = ${r.offices.find((o) => o.currency === "INR")?.rate ?? "-"} NOK). \u201CBox empty\u201D is the average time from \u201Creported empty\u201D to \u201Cbought\u201D.
+    Generated by simulating November with the same code as the scenarios above.</p>`;
+  }
+  var list = document.getElementById("scenario-list");
+  var stage = document.getElementById("stage");
+  var report = document.getElementById("report");
+  var current = "";
+  var runId = 0;
+  function renderList() {
+    list.innerHTML = Object.entries(SCENARIOS).map(
+      ([key2, s], i) => `
+      <li><button class="scenario ${key2 === current ? "on" : ""}" data-key="${key2}" aria-pressed="${key2 === current}">
+        <span class="num">${i + 1}</span>
+        <span class="scenario-text"><b>${h(s.title)}</b><span>${h(s.summary)}</span><em>${h(s.proves)}</em></span>
+      </button></li>`
+    ).join("");
+  }
+  async function play(key2) {
+    const scenario = SCENARIOS[key2];
+    if (!scenario) return;
+    current = key2;
+    const id = ++runId;
+    renderList();
+    history.replaceState(null, "", `#scenario=${key2}`);
+    stage.innerHTML = `<div class="stage-head"><div><span class="eyebrow">Scenario ${Object.keys(SCENARIOS).indexOf(key2) + 1} of 7</span><h2>${h(scenario.title)}</h2></div></div><div class="loading">Running\u2026</div>`;
+    const sim = new Sim();
+    await scenario.run(sim);
+    if (id !== runId) return;
+    const body = key2 === "month" ? await monthSummary(sim) : transcript(sim.entries);
+    stage.innerHTML = `
+    <div class="stage-head">
+      <div><span class="eyebrow">Scenario ${Object.keys(SCENARIOS).indexOf(key2) + 1} of 7 \xB7 times in Oslo</span><h2>${h(scenario.title)}</h2></div>
+      <button class="replay" data-replay="${key2}">Replay</button>
+    </div>
+    <div class="proves">Proves: <b>${h(scenario.proves)}</b></div>
+    <div class="chat">${body}</div>`;
+  }
+  list.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-key]");
+    if (btn) void play(btn.dataset.key);
+  });
+  stage.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-replay]");
+    if (btn) void play(btn.dataset.replay);
+  });
+  async function buildReport() {
+    const sim = new Sim();
+    await simulateMonth(sim);
+    report.innerHTML = reportCard(await sim.app.monthlyReport("2026-11"));
+  }
   var fromHash = /^#scenario=(\w+)$/.exec(location.hash)?.[1];
-  if (fromHash && SCENARIOS[fromHash]) void run(() => runScenario(fromHash));
-  else void render();
+  void play(fromHash && SCENARIOS[fromHash] ? fromHash : "race");
+  void buildReport();
 })();
